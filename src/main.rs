@@ -86,7 +86,7 @@ fn draw_fighter(
     };
     draw.draw_rectangle(marker_x, body.y + 28, 10, 10, outline);
 
-    if fighter.is_performing_standing_attack() {
+    if fighter.is_standing_attack_active() {
         draw_standing_attack(draw, body, fighter.facing_direction(), outline);
     }
 }

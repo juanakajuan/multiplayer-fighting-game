@@ -26,6 +26,15 @@ const FIGHTER_GRAVITY_PER_TICK: i32 = 2;
 const PLAYER_ONE_START_X: i32 = 420;
 const PLAYER_TWO_START_X: i32 = 860;
 
+/// Startup duration for the current standing melee attack.
+pub const STANDING_ATTACK_STARTUP_TICKS: u32 = 6;
+
+/// Active duration for the current standing melee attack.
+pub const STANDING_ATTACK_ACTIVE_TICKS: u32 = 4;
+
+/// Recovery duration for the current standing melee attack.
+pub const STANDING_ATTACK_RECOVERY_TICKS: u32 = 12;
+
 /// Default one-screen arena used by the current local match.
 pub const DEFAULT_ARENA: Arena = Arena {
     width: ARENA_WIDTH,
@@ -63,7 +72,24 @@ pub struct FighterState {
     body: Rect,
     facing_direction: FacingDirection,
     vertical_velocity_per_tick: i32,
-    standing_attack: bool,
+    standing_attack: Option<StandingAttackState>,
+}
+
+/// Current phase of a standing melee attack.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AttackPhase {
+    /// Pre-hit frames before the strike is active.
+    Startup,
+    /// Frames where the strike can later own an attack hitbox.
+    Active,
+    /// Post-hit frames before the fighter returns to neutral.
+    Recovery,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StandingAttackState {
+    phase: AttackPhase,
+    ticks_in_phase: u32,
 }
 
 /// Horizontal direction a fighter is currently facing.
@@ -92,7 +118,7 @@ impl FighterState {
             },
             facing_direction,
             vertical_velocity_per_tick: 0,
-            standing_attack: false,
+            standing_attack: None,
         }
     }
 
@@ -111,7 +137,22 @@ impl FighterState {
     /// Whether the fighter is performing the simple standing melee attack this tick.
     #[must_use]
     pub const fn is_performing_standing_attack(&self) -> bool {
-        self.standing_attack
+        self.standing_attack.is_some()
+    }
+
+    /// Current standing attack phase, if the fighter is attacking.
+    #[must_use]
+    pub const fn standing_attack_phase(&self) -> Option<AttackPhase> {
+        match self.standing_attack {
+            Some(standing_attack) => Some(standing_attack.phase),
+            None => None,
+        }
+    }
+
+    /// Whether the standing attack is in its active frames this tick.
+    #[must_use]
+    pub const fn is_standing_attack_active(&self) -> bool {
+        matches!(self.standing_attack_phase(), Some(AttackPhase::Active))
     }
 
     fn move_horizontally(&mut self, direction: i32, arena: Arena) {
@@ -141,7 +182,55 @@ impl FighterState {
     }
 
     fn update_standing_attack(&mut self, attack: bool, arena: Arena) {
-        self.standing_attack = attack && self.is_grounded(arena);
+        if let Some(standing_attack) = self.standing_attack {
+            self.standing_attack = standing_attack.advance();
+        } else if attack && self.is_grounded(arena) {
+            self.standing_attack = Some(StandingAttackState::new());
+        }
+    }
+}
+
+impl StandingAttackState {
+    const fn new() -> Self {
+        Self {
+            phase: AttackPhase::Startup,
+            ticks_in_phase: 1,
+        }
+    }
+
+    /// Advances the standing attack by one fixed tick.
+    ///
+    /// Returns the next attack state, or `None` once recovery has finished.
+    fn advance(self) -> Option<Self> {
+        if self.ticks_in_phase < self.phase.duration_ticks() {
+            return Some(Self {
+                ticks_in_phase: self.ticks_in_phase + 1,
+                ..self
+            });
+        }
+
+        self.phase.next().map(|phase| Self {
+            phase,
+            ticks_in_phase: 1,
+        })
+    }
+}
+
+impl AttackPhase {
+    const fn duration_ticks(self) -> u32 {
+        match self {
+            Self::Startup => STANDING_ATTACK_STARTUP_TICKS,
+            Self::Active => STANDING_ATTACK_ACTIVE_TICKS,
+            Self::Recovery => STANDING_ATTACK_RECOVERY_TICKS,
+        }
+    }
+
+    const fn next(self) -> Option<Self> {
+        match self {
+            Self::Startup => Some(Self::Active),
+            Self::Active => Some(Self::Recovery),
+            Self::Recovery => None,
+        }
     }
 }
 
@@ -154,7 +243,7 @@ pub struct PlayerInput {
     pub move_right: bool,
     /// Request a jump if the fighter is grounded.
     pub jump: bool,
-    /// Captured for the first combat slice; not simulated yet.
+    /// Request a grounded standing attack if the fighter is neutral.
     pub attack: bool,
 }
 
@@ -267,7 +356,9 @@ fn horizontal_direction(input: PlayerInput) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        FIGHTER_HORIZONTAL_SPEED_PER_TICK, FacingDirection, FrameInput, GameState, PlayerInput,
+        AttackPhase, FIGHTER_HORIZONTAL_SPEED_PER_TICK, FacingDirection, FrameInput, GameState,
+        PlayerInput, STANDING_ATTACK_ACTIVE_TICKS, STANDING_ATTACK_RECOVERY_TICKS,
+        STANDING_ATTACK_STARTUP_TICKS,
     };
 
     #[test]
@@ -433,11 +524,16 @@ mod tests {
         });
 
         assert!(state.player_one().is_performing_standing_attack());
+        assert_eq!(
+            state.player_one().standing_attack_phase(),
+            Some(AttackPhase::Startup)
+        );
+        assert!(!state.player_one().is_standing_attack_active());
         assert!(!state.player_two().is_performing_standing_attack());
     }
 
     #[test]
-    fn standing_attack_ends_when_attack_input_is_released() {
+    fn standing_attack_advances_through_startup_active_and_recovery() {
         let mut state = GameState::new();
 
         state.step(FrameInput {
@@ -447,9 +543,45 @@ mod tests {
             },
             player_two: PlayerInput::default(),
         });
+
+        for _ in 1..STANDING_ATTACK_STARTUP_TICKS {
+            assert_eq!(
+                state.player_one().standing_attack_phase(),
+                Some(AttackPhase::Startup)
+            );
+            assert!(!state.player_one().is_standing_attack_active());
+
+            state.step(FrameInput::default());
+        }
+
+        state.step(FrameInput::default());
+
+        for _ in 1..STANDING_ATTACK_ACTIVE_TICKS {
+            assert_eq!(
+                state.player_one().standing_attack_phase(),
+                Some(AttackPhase::Active)
+            );
+            assert!(state.player_one().is_standing_attack_active());
+
+            state.step(FrameInput::default());
+        }
+
+        state.step(FrameInput::default());
+
+        for _ in 1..STANDING_ATTACK_RECOVERY_TICKS {
+            assert_eq!(
+                state.player_one().standing_attack_phase(),
+                Some(AttackPhase::Recovery)
+            );
+            assert!(!state.player_one().is_standing_attack_active());
+
+            state.step(FrameInput::default());
+        }
+
         state.step(FrameInput::default());
 
         assert!(!state.player_one().is_performing_standing_attack());
+        assert_eq!(state.player_one().standing_attack_phase(), None);
     }
 
     #[test]
@@ -466,5 +598,6 @@ mod tests {
         });
 
         assert!(!state.player_one().is_performing_standing_attack());
+        assert_eq!(state.player_one().standing_attack_phase(), None);
     }
 }
