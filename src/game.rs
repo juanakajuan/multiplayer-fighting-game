@@ -61,13 +61,27 @@ pub struct Rect {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FighterState {
     body: Rect,
+    facing_direction: FacingDirection,
     vertical_velocity_per_tick: i32,
+}
+
+/// Horizontal direction a fighter is currently facing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FacingDirection {
+    /// Facing screen-left.
+    Left,
+    /// Facing screen-right.
+    Right,
 }
 
 impl FighterState {
     /// Creates a grounded fighter whose body is centered on `center_x`.
     #[must_use]
-    pub const fn grounded_at_center(center_x: i32, ground_y: i32) -> Self {
+    pub const fn grounded_at_center(
+        center_x: i32,
+        ground_y: i32,
+        facing_direction: FacingDirection,
+    ) -> Self {
         Self {
             body: Rect {
                 x: center_x - (FIGHTER_WIDTH / 2),
@@ -75,6 +89,7 @@ impl FighterState {
                 width: FIGHTER_WIDTH,
                 height: FIGHTER_HEIGHT,
             },
+            facing_direction,
             vertical_velocity_per_tick: 0,
         }
     }
@@ -83,6 +98,12 @@ impl FighterState {
     #[must_use]
     pub const fn body(&self) -> Rect {
         self.body
+    }
+
+    /// Current horizontal facing direction.
+    #[must_use]
+    pub const fn facing_direction(&self) -> FacingDirection {
+        self.facing_direction
     }
 
     fn move_horizontally(&mut self, direction: i32, arena: Arena) {
@@ -148,8 +169,16 @@ impl Default for GameState {
         Self {
             tick: 0,
             arena: DEFAULT_ARENA,
-            player_one: FighterState::grounded_at_center(PLAYER_ONE_START_X, ARENA_GROUND_Y),
-            player_two: FighterState::grounded_at_center(PLAYER_TWO_START_X, ARENA_GROUND_Y),
+            player_one: FighterState::grounded_at_center(
+                PLAYER_ONE_START_X,
+                ARENA_GROUND_Y,
+                FacingDirection::Right,
+            ),
+            player_two: FighterState::grounded_at_center(
+                PLAYER_TWO_START_X,
+                ARENA_GROUND_Y,
+                FacingDirection::Left,
+            ),
         }
     }
 }
@@ -189,8 +218,26 @@ impl GameState {
             .move_horizontally(horizontal_direction(input.player_two), self.arena);
         self.player_two
             .move_vertically(input.player_two.jump, self.arena);
+        self.update_facing_directions();
         self.tick = self.tick.checked_add(1).expect("tick counter overflow");
     }
+
+    fn update_facing_directions(&mut self) {
+        let player_one_center_x = center_x(self.player_one.body);
+        let player_two_center_x = center_x(self.player_two.body);
+
+        if player_one_center_x < player_two_center_x {
+            self.player_one.facing_direction = FacingDirection::Right;
+            self.player_two.facing_direction = FacingDirection::Left;
+        } else if player_one_center_x > player_two_center_x {
+            self.player_one.facing_direction = FacingDirection::Left;
+            self.player_two.facing_direction = FacingDirection::Right;
+        }
+    }
+}
+
+fn center_x(rect: Rect) -> i32 {
+    rect.x + (rect.width / 2)
 }
 
 fn horizontal_direction(input: PlayerInput) -> i32 {
@@ -203,7 +250,9 @@ fn horizontal_direction(input: PlayerInput) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{FIGHTER_HORIZONTAL_SPEED_PER_TICK, FrameInput, GameState, PlayerInput};
+    use super::{
+        FIGHTER_HORIZONTAL_SPEED_PER_TICK, FacingDirection, FrameInput, GameState, PlayerInput,
+    };
 
     #[test]
     fn neutral_step_advances_one_tick() {
@@ -212,6 +261,42 @@ mod tests {
         state.step(FrameInput::default());
 
         assert_eq!(state.tick, 1);
+    }
+
+    #[test]
+    fn fighters_start_facing_each_other() {
+        let state = GameState::new();
+
+        assert_eq!(
+            state.player_one().facing_direction(),
+            FacingDirection::Right
+        );
+        assert_eq!(state.player_two().facing_direction(), FacingDirection::Left);
+    }
+
+    #[test]
+    fn fighters_turn_to_face_each_other_after_crossing() {
+        let mut state = GameState::new();
+        let input = FrameInput {
+            player_one: PlayerInput {
+                move_right: true,
+                ..PlayerInput::default()
+            },
+            player_two: PlayerInput {
+                move_left: true,
+                ..PlayerInput::default()
+            },
+        };
+
+        for _ in 0..40 {
+            state.step(input);
+        }
+
+        assert_eq!(state.player_one().facing_direction(), FacingDirection::Left);
+        assert_eq!(
+            state.player_two().facing_direction(),
+            FacingDirection::Right
+        );
     }
 
     #[test]

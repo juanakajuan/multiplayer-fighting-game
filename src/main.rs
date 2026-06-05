@@ -79,6 +79,12 @@ fn draw_fighter(
     let body = fighter.body();
     draw.draw_rectangle(body.x, body.y, body.width, body.height, fill);
     draw.draw_rectangle_lines(body.x, body.y, body.width, body.height, outline);
+
+    let marker_x = match fighter.facing_direction() {
+        game::FacingDirection::Left => body.x + 12,
+        game::FacingDirection::Right => body.x + body.width - 22,
+    };
+    draw.draw_rectangle(marker_x, body.y + 28, 10, 10, outline);
 }
 
 fn main() {
