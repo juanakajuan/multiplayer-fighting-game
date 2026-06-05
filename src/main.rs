@@ -27,13 +27,63 @@ fn read_frame_input(rl: &RaylibHandle) -> game::FrameInput {
     }
 }
 
+fn draw_game(draw: &mut RaylibDrawHandle<'_>, state: &game::GameState) {
+    draw.clear_background(Color::new(11, 11, 11, 255));
+    draw_arena(draw, state.arena());
+    draw_fighter(
+        draw,
+        state.player_one(),
+        Color::new(70, 145, 255, 255),
+        Color::new(210, 231, 255, 255),
+    );
+    draw_fighter(
+        draw,
+        state.player_two(),
+        Color::new(238, 92, 92, 255),
+        Color::new(255, 224, 224, 255),
+    );
+}
+
+fn draw_arena(draw: &mut RaylibDrawHandle<'_>, arena: game::Arena) {
+    draw.draw_rectangle(
+        0,
+        arena.ground_y,
+        arena.width,
+        arena.height - arena.ground_y,
+        Color::new(36, 38, 44, 255),
+    );
+    draw.draw_line(
+        0,
+        arena.ground_y,
+        arena.width,
+        arena.ground_y,
+        Color::new(228, 231, 236, 255),
+    );
+    draw.draw_rectangle_lines(
+        0,
+        0,
+        arena.width,
+        arena.ground_y,
+        Color::new(76, 82, 92, 255),
+    );
+}
+
+fn draw_fighter(
+    draw: &mut RaylibDrawHandle<'_>,
+    fighter: game::FighterState,
+    fill: Color,
+    outline: Color,
+) {
+    let body = fighter.body();
+    draw.draw_rectangle(body.x, body.y, body.width, body.height, fill);
+    draw.draw_rectangle_lines(body.x, body.y, body.width, body.height, outline);
+}
+
 fn main() {
-    const SCREEN_WIDTH: i32 = 1280;
-    const SCREEN_HEIGHT: i32 = 720;
     const MAX_CATCH_UP_TICKS: f64 = 5.0;
 
     let (mut rl, thread) = raylib::init()
-        .size(SCREEN_WIDTH, SCREEN_HEIGHT)
+        .size(game::ARENA_WIDTH, game::ARENA_HEIGHT)
         .title("Multiplayer Fighting Game")
         .build();
 
@@ -57,6 +107,6 @@ fn main() {
         }
 
         let mut draw = rl.begin_drawing(&thread);
-        draw.clear_background(raylib::color::Color::BLACK);
+        draw_game(&mut draw, &game_state);
     }
 }
