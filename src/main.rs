@@ -2,6 +2,31 @@ mod game;
 
 use raylib::prelude::*;
 
+fn read_player_one_input(rl: &RaylibHandle) -> game::PlayerInput {
+    game::PlayerInput {
+        move_left: rl.is_key_down(KeyboardKey::KEY_A),
+        move_right: rl.is_key_down(KeyboardKey::KEY_D),
+        jump: rl.is_key_down(KeyboardKey::KEY_W),
+        attack: rl.is_key_down(KeyboardKey::KEY_SPACE),
+    }
+}
+
+fn read_player_two_input(rl: &RaylibHandle) -> game::PlayerInput {
+    game::PlayerInput {
+        move_left: rl.is_key_down(KeyboardKey::KEY_LEFT),
+        move_right: rl.is_key_down(KeyboardKey::KEY_RIGHT),
+        jump: rl.is_key_down(KeyboardKey::KEY_UP),
+        attack: rl.is_key_down(KeyboardKey::KEY_SLASH),
+    }
+}
+
+fn read_frame_input(rl: &RaylibHandle) -> game::FrameInput {
+    game::FrameInput {
+        player_one: read_player_one_input(rl),
+        player_two: read_player_two_input(rl),
+    }
+}
+
 fn main() {
     const SCREEN_WIDTH: i32 = 1280;
     const SCREEN_HEIGHT: i32 = 720;
@@ -27,7 +52,7 @@ fn main() {
         accumulated_time_seconds += elapsed_time_seconds;
 
         while accumulated_time_seconds >= game::SECONDS_PER_TICK {
-            game_state.step(game::FrameInput::default());
+            game_state.step(read_frame_input(&rl));
             accumulated_time_seconds -= game::SECONDS_PER_TICK;
         }
 
