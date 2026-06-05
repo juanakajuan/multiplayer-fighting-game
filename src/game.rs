@@ -63,6 +63,7 @@ pub struct FighterState {
     body: Rect,
     facing_direction: FacingDirection,
     vertical_velocity_per_tick: i32,
+    standing_attack: bool,
 }
 
 /// Horizontal direction a fighter is currently facing.
@@ -91,6 +92,7 @@ impl FighterState {
             },
             facing_direction,
             vertical_velocity_per_tick: 0,
+            standing_attack: false,
         }
     }
 
@@ -104,6 +106,12 @@ impl FighterState {
     #[must_use]
     pub const fn facing_direction(&self) -> FacingDirection {
         self.facing_direction
+    }
+
+    /// Whether the fighter is performing the simple standing melee attack this tick.
+    #[must_use]
+    pub const fn is_performing_standing_attack(&self) -> bool {
+        self.standing_attack
     }
 
     fn move_horizontally(&mut self, direction: i32, arena: Arena) {
@@ -130,6 +138,10 @@ impl FighterState {
 
     fn is_grounded(&self, arena: Arena) -> bool {
         self.body.y + self.body.height >= arena.ground_y
+    }
+
+    fn update_standing_attack(&mut self, attack: bool, arena: Arena) {
+        self.standing_attack = attack && self.is_grounded(arena);
     }
 }
 
@@ -214,10 +226,14 @@ impl GameState {
             .move_horizontally(horizontal_direction(input.player_one), self.arena);
         self.player_one
             .move_vertically(input.player_one.jump, self.arena);
+        self.player_one
+            .update_standing_attack(input.player_one.attack, self.arena);
         self.player_two
             .move_horizontally(horizontal_direction(input.player_two), self.arena);
         self.player_two
             .move_vertically(input.player_two.jump, self.arena);
+        self.player_two
+            .update_standing_attack(input.player_two.attack, self.arena);
         self.update_facing_directions();
         self.tick = self.tick.checked_add(1).expect("tick counter overflow");
     }
@@ -402,5 +418,53 @@ mod tests {
         }
 
         assert_eq!(state.player_one().body().y, player_one_start_y);
+    }
+
+    #[test]
+    fn grounded_attack_input_starts_standing_attack() {
+        let mut state = GameState::new();
+
+        state.step(FrameInput {
+            player_one: PlayerInput {
+                attack: true,
+                ..PlayerInput::default()
+            },
+            player_two: PlayerInput::default(),
+        });
+
+        assert!(state.player_one().is_performing_standing_attack());
+        assert!(!state.player_two().is_performing_standing_attack());
+    }
+
+    #[test]
+    fn standing_attack_ends_when_attack_input_is_released() {
+        let mut state = GameState::new();
+
+        state.step(FrameInput {
+            player_one: PlayerInput {
+                attack: true,
+                ..PlayerInput::default()
+            },
+            player_two: PlayerInput::default(),
+        });
+        state.step(FrameInput::default());
+
+        assert!(!state.player_one().is_performing_standing_attack());
+    }
+
+    #[test]
+    fn airborne_attack_input_does_not_start_standing_attack() {
+        let mut state = GameState::new();
+
+        state.step(FrameInput {
+            player_one: PlayerInput {
+                jump: true,
+                attack: true,
+                ..PlayerInput::default()
+            },
+            player_two: PlayerInput::default(),
+        });
+
+        assert!(!state.player_one().is_performing_standing_attack());
     }
 }

@@ -85,6 +85,29 @@ fn draw_fighter(
         game::FacingDirection::Right => body.x + body.width - 22,
     };
     draw.draw_rectangle(marker_x, body.y + 28, 10, 10, outline);
+
+    if fighter.is_performing_standing_attack() {
+        draw_standing_attack(draw, body, fighter.facing_direction(), outline);
+    }
+}
+
+fn draw_standing_attack(
+    draw: &mut RaylibDrawHandle<'_>,
+    body: game::Rect,
+    facing_direction: game::FacingDirection,
+    color: Color,
+) {
+    const ATTACK_WIDTH: i32 = 54;
+    const ATTACK_HEIGHT: i32 = 26;
+    const ATTACK_VERTICAL_OFFSET: i32 = 54;
+
+    let attack_x = match facing_direction {
+        game::FacingDirection::Left => body.x - ATTACK_WIDTH,
+        game::FacingDirection::Right => body.x + body.width,
+    };
+    let attack_y = body.y + ATTACK_VERTICAL_OFFSET;
+
+    draw.draw_rectangle(attack_x, attack_y, ATTACK_WIDTH, ATTACK_HEIGHT, color);
 }
 
 fn main() {
