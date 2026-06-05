@@ -27,7 +27,7 @@ fn main() {
         accumulated_time_seconds += elapsed_time_seconds;
 
         while accumulated_time_seconds >= game::SECONDS_PER_TICK {
-            game_state.step_one_frame();
+            game_state.step(game::FrameInput::default());
             accumulated_time_seconds -= game::SECONDS_PER_TICK;
         }
 
