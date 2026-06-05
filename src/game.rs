@@ -66,6 +66,12 @@ pub struct Rect {
     pub height: i32,
 }
 
+/// Vulnerable fighter area used for combat collision.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Hurtbox {
+    rect: Rect,
+}
+
 /// Per-fighter gameplay state owned by [`GameState`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FighterState {
@@ -73,6 +79,14 @@ pub struct FighterState {
     facing_direction: FacingDirection,
     vertical_velocity_per_tick: i32,
     standing_attack: Option<StandingAttackState>,
+}
+
+impl Hurtbox {
+    /// Rectangle occupied by this hurtbox in screen-space pixels.
+    #[must_use]
+    pub const fn rect(&self) -> Rect {
+        self.rect
+    }
 }
 
 /// Current phase of a standing melee attack.
@@ -122,10 +136,16 @@ impl FighterState {
         }
     }
 
-    /// Current body rectangle, doubling as the hurtbox until combat boxes exist.
+    /// Current visible body rectangle.
     #[must_use]
     pub const fn body(&self) -> Rect {
         self.body
+    }
+
+    /// Current vulnerable area for combat collision.
+    #[must_use]
+    pub const fn hurtbox(&self) -> Hurtbox {
+        Hurtbox { rect: self.body }
     }
 
     /// Current horizontal facing direction.
@@ -356,9 +376,9 @@ fn horizontal_direction(input: PlayerInput) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        AttackPhase, FIGHTER_HORIZONTAL_SPEED_PER_TICK, FacingDirection, FrameInput, GameState,
-        PlayerInput, STANDING_ATTACK_ACTIVE_TICKS, STANDING_ATTACK_RECOVERY_TICKS,
-        STANDING_ATTACK_STARTUP_TICKS,
+        AttackPhase, FIGHTER_HORIZONTAL_SPEED_PER_TICK, FIGHTER_JUMP_SPEED_PER_TICK,
+        FacingDirection, FrameInput, GameState, PlayerInput, STANDING_ATTACK_ACTIVE_TICKS,
+        STANDING_ATTACK_RECOVERY_TICKS, STANDING_ATTACK_STARTUP_TICKS,
     };
 
     #[test]
@@ -431,6 +451,31 @@ mod tests {
             state.player_two().body().x,
             player_two_start_x - FIGHTER_HORIZONTAL_SPEED_PER_TICK
         );
+    }
+
+    #[test]
+    fn hurtbox_tracks_fighter_body() {
+        let mut state = GameState::new();
+        let start_hurtbox = state.player_one().hurtbox().rect();
+
+        state.step(FrameInput {
+            player_one: PlayerInput {
+                move_right: true,
+                jump: true,
+                ..PlayerInput::default()
+            },
+            player_two: PlayerInput::default(),
+        });
+
+        let hurtbox = state.player_one().hurtbox().rect();
+
+        assert_eq!(
+            hurtbox.x,
+            start_hurtbox.x + FIGHTER_HORIZONTAL_SPEED_PER_TICK
+        );
+        assert_eq!(hurtbox.y, start_hurtbox.y + FIGHTER_JUMP_SPEED_PER_TICK);
+        assert_eq!(hurtbox.width, start_hurtbox.width);
+        assert_eq!(hurtbox.height, start_hurtbox.height);
     }
 
     #[test]
