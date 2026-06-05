@@ -1,42 +1,71 @@
+//! Headless, deterministic gameplay simulation.
+//!
+//! Keep rendering and device input outside this module so the same fixed-tick
+//! state transition can later be driven by local controls or networked inputs.
+
+/// Number of simulation ticks advanced per second.
 pub const TICKS_PER_SECOND: u32 = 60;
+
+/// Wall-clock duration of one fixed simulation tick.
 pub const SECONDS_PER_TICK: f64 = 1.0 / (TICKS_PER_SECOND as f64);
+
+/// Arena width in pixels.
 pub const ARENA_WIDTH: i32 = 1280;
+
+/// Arena height in pixels.
 pub const ARENA_HEIGHT: i32 = 720;
+
+/// Screen-space y coordinate of the top of the floor.
 pub const ARENA_GROUND_Y: i32 = 620;
 
 const FIGHTER_WIDTH: i32 = 72;
 const FIGHTER_HEIGHT: i32 = 144;
 const FIGHTER_HORIZONTAL_SPEED_PER_TICK: i32 = 6;
+const FIGHTER_JUMP_SPEED_PER_TICK: i32 = -28;
+const FIGHTER_GRAVITY_PER_TICK: i32 = 2;
 const PLAYER_ONE_START_X: i32 = 420;
 const PLAYER_TWO_START_X: i32 = 860;
 
+/// Default one-screen arena used by the current local match.
 pub const DEFAULT_ARENA: Arena = Arena {
     width: ARENA_WIDTH,
     height: ARENA_HEIGHT,
     ground_y: ARENA_GROUND_Y,
 };
 
+/// Static arena bounds for a flat, one-screen stage.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Arena {
+    /// Width in pixels.
     pub width: i32,
+    /// Height in pixels.
     pub height: i32,
+    /// Screen-space y coordinate where fighters stand.
     pub ground_y: i32,
 }
 
+/// Integer axis-aligned rectangle in screen-space pixels.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Rect {
+    /// Left edge in pixels.
     pub x: i32,
+    /// Top edge in pixels.
     pub y: i32,
+    /// Width in pixels.
     pub width: i32,
+    /// Height in pixels.
     pub height: i32,
 }
 
+/// Per-fighter gameplay state owned by [`GameState`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FighterState {
     body: Rect,
+    vertical_velocity_per_tick: i32,
 }
 
 impl FighterState {
+    /// Creates a grounded fighter whose body is centered on `center_x`.
     #[must_use]
     pub const fn grounded_at_center(center_x: i32, ground_y: i32) -> Self {
         Self {
@@ -46,9 +75,11 @@ impl FighterState {
                 width: FIGHTER_WIDTH,
                 height: FIGHTER_HEIGHT,
             },
+            vertical_velocity_per_tick: 0,
         }
     }
 
+    /// Current body rectangle, doubling as the hurtbox until combat boxes exist.
     #[must_use]
     pub const fn body(&self) -> Rect {
         self.body
@@ -59,22 +90,51 @@ impl FighterState {
         self.body.x =
             (self.body.x + (direction * FIGHTER_HORIZONTAL_SPEED_PER_TICK)).clamp(0, max_x);
     }
+
+    fn move_vertically(&mut self, jump: bool, arena: Arena) {
+        // Apply jump impulse before gravity so jumps visibly begin on this tick.
+        if jump && self.is_grounded(arena) {
+            self.vertical_velocity_per_tick = FIGHTER_JUMP_SPEED_PER_TICK;
+        }
+
+        self.body.y += self.vertical_velocity_per_tick;
+        self.vertical_velocity_per_tick += FIGHTER_GRAVITY_PER_TICK;
+
+        let ground_top = arena.ground_y - self.body.height;
+        if self.body.y >= ground_top {
+            self.body.y = ground_top;
+            self.vertical_velocity_per_tick = 0;
+        }
+    }
+
+    fn is_grounded(&self, arena: Arena) -> bool {
+        self.body.y + self.body.height >= arena.ground_y
+    }
 }
 
+/// Raw controls sampled for one player during a single fixed tick.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PlayerInput {
+    /// Request movement toward screen-left.
     pub move_left: bool,
+    /// Request movement toward screen-right.
     pub move_right: bool,
+    /// Request a jump if the fighter is grounded.
     pub jump: bool,
+    /// Captured for the first combat slice; not simulated yet.
     pub attack: bool,
 }
 
+/// Complete input snapshot consumed by one [`GameState::step`] call.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct FrameInput {
+    /// Player one's input for this tick.
     pub player_one: PlayerInput,
+    /// Player two's input for this tick.
     pub player_two: PlayerInput,
 }
 
+/// Complete deterministic match state for the current local game.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GameState {
     tick: u64,
@@ -95,31 +155,40 @@ impl Default for GameState {
 }
 
 impl GameState {
+    /// Creates a new local match at the default starting positions.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Arena used for movement constraints and rendering.
     #[must_use]
     pub const fn arena(&self) -> Arena {
         self.arena
     }
 
+    /// Current state for player one.
     #[must_use]
     pub const fn player_one(&self) -> FighterState {
         self.player_one
     }
 
+    /// Current state for player two.
     #[must_use]
     pub const fn player_two(&self) -> FighterState {
         self.player_two
     }
 
+    /// Advances gameplay by exactly one fixed tick.
     pub fn step(&mut self, input: FrameInput) {
         self.player_one
             .move_horizontally(horizontal_direction(input.player_one), self.arena);
+        self.player_one
+            .move_vertically(input.player_one.jump, self.arena);
         self.player_two
             .move_horizontally(horizontal_direction(input.player_two), self.arena);
+        self.player_two
+            .move_vertically(input.player_two.jump, self.arena);
         self.tick = self.tick.checked_add(1).expect("tick counter overflow");
     }
 }
@@ -212,5 +281,41 @@ mod tests {
             state.player_two().body().x + state.player_two().body().width,
             state.arena().width
         );
+    }
+
+    #[test]
+    fn jump_input_lifts_fighter_off_ground() {
+        let mut state = GameState::new();
+        let player_one_start_y = state.player_one().body().y;
+
+        state.step(FrameInput {
+            player_one: PlayerInput {
+                jump: true,
+                ..PlayerInput::default()
+            },
+            player_two: PlayerInput::default(),
+        });
+
+        assert!(state.player_one().body().y < player_one_start_y);
+    }
+
+    #[test]
+    fn jumping_fighter_lands_on_ground() {
+        let mut state = GameState::new();
+        let player_one_start_y = state.player_one().body().y;
+
+        state.step(FrameInput {
+            player_one: PlayerInput {
+                jump: true,
+                ..PlayerInput::default()
+            },
+            player_two: PlayerInput::default(),
+        });
+
+        for _ in 0..60 {
+            state.step(FrameInput::default());
+        }
+
+        assert_eq!(state.player_one().body().y, player_one_start_y);
     }
 }

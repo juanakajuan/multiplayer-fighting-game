@@ -1,3 +1,5 @@
+//! Raylib shell for input, rendering, and fixed-timestep driving of the game.
+
 mod game;
 
 use raylib::prelude::*;
@@ -80,6 +82,7 @@ fn draw_fighter(
 }
 
 fn main() {
+    // Prevent long stalls from causing an unbounded simulation catch-up spiral.
     const MAX_CATCH_UP_TICKS: f64 = 5.0;
 
     let (mut rl, thread) = raylib::init()
