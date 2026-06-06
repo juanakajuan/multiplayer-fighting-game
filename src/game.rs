@@ -25,6 +25,9 @@ const FIGHTER_JUMP_SPEED_PER_TICK: i32 = -28;
 const FIGHTER_GRAVITY_PER_TICK: i32 = 2;
 const PLAYER_ONE_START_X: i32 = 420;
 const PLAYER_TWO_START_X: i32 = 860;
+const STANDING_ATTACK_HITBOX_WIDTH: i32 = 54;
+const STANDING_ATTACK_HITBOX_HEIGHT: i32 = 26;
+const STANDING_ATTACK_HITBOX_VERTICAL_OFFSET: i32 = 54;
 
 /// Startup duration for the current standing melee attack.
 pub const STANDING_ATTACK_STARTUP_TICKS: u32 = 6;
@@ -72,6 +75,12 @@ pub struct Hurtbox {
     rect: Rect,
 }
 
+/// Offensive area used for attack collision.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AttackHitbox {
+    rect: Rect,
+}
+
 /// Per-fighter gameplay state owned by [`GameState`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FighterState {
@@ -89,12 +98,20 @@ impl Hurtbox {
     }
 }
 
+impl AttackHitbox {
+    /// Rectangle occupied by this hitbox in screen-space pixels.
+    #[must_use]
+    pub const fn rect(&self) -> Rect {
+        self.rect
+    }
+}
+
 /// Current phase of a standing melee attack.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AttackPhase {
     /// Pre-hit frames before the strike is active.
     Startup,
-    /// Frames where the strike can later own an attack hitbox.
+    /// Frames where the strike owns an attack hitbox.
     Active,
     /// Post-hit frames before the fighter returns to neutral.
     Recovery,
@@ -175,6 +192,28 @@ impl FighterState {
         matches!(self.standing_attack_phase(), Some(AttackPhase::Active))
     }
 
+    /// Current offensive hitbox, if the standing attack is active this tick.
+    #[must_use]
+    pub const fn attack_hitbox(&self) -> Option<AttackHitbox> {
+        if self.is_standing_attack_active() {
+            let x = match self.facing_direction {
+                FacingDirection::Left => self.body.x - STANDING_ATTACK_HITBOX_WIDTH,
+                FacingDirection::Right => self.body.x + self.body.width,
+            };
+
+            Some(AttackHitbox {
+                rect: Rect {
+                    x,
+                    y: self.body.y + STANDING_ATTACK_HITBOX_VERTICAL_OFFSET,
+                    width: STANDING_ATTACK_HITBOX_WIDTH,
+                    height: STANDING_ATTACK_HITBOX_HEIGHT,
+                },
+            })
+        } else {
+            None
+        }
+    }
+
     fn move_horizontally(&mut self, direction: i32, arena: Arena) {
         let max_x = (arena.width - self.body.width).max(0);
         self.body.x =
@@ -202,8 +241,9 @@ impl FighterState {
     }
 
     fn update_standing_attack(&mut self, attack: bool, arena: Arena) {
-        if let Some(standing_attack) = self.standing_attack {
-            self.standing_attack = standing_attack.advance();
+        if self.is_performing_standing_attack() {
+            // `and_then(...)` means: keep the advanced state if there is one, or set `standing_attack` to `None` if the attack finished.
+            self.standing_attack = self.standing_attack.and_then(StandingAttackState::advance);
         } else if attack && self.is_grounded(arena) {
             self.standing_attack = Some(StandingAttackState::new());
         }
@@ -378,7 +418,9 @@ mod tests {
     use super::{
         AttackPhase, FIGHTER_HORIZONTAL_SPEED_PER_TICK, FIGHTER_JUMP_SPEED_PER_TICK,
         FacingDirection, FrameInput, GameState, PlayerInput, STANDING_ATTACK_ACTIVE_TICKS,
-        STANDING_ATTACK_RECOVERY_TICKS, STANDING_ATTACK_STARTUP_TICKS,
+        STANDING_ATTACK_HITBOX_HEIGHT, STANDING_ATTACK_HITBOX_VERTICAL_OFFSET,
+        STANDING_ATTACK_HITBOX_WIDTH, STANDING_ATTACK_RECOVERY_TICKS,
+        STANDING_ATTACK_STARTUP_TICKS,
     };
 
     #[test]
@@ -627,6 +669,81 @@ mod tests {
 
         assert!(!state.player_one().is_performing_standing_attack());
         assert_eq!(state.player_one().standing_attack_phase(), None);
+    }
+
+    #[test]
+    fn standing_attack_has_hitbox_only_during_active_frames() {
+        let mut state = GameState::new();
+
+        state.step(FrameInput {
+            player_one: PlayerInput {
+                attack: true,
+                ..PlayerInput::default()
+            },
+            player_two: PlayerInput {
+                attack: true,
+                ..PlayerInput::default()
+            },
+        });
+
+        assert_eq!(
+            state.player_one().standing_attack_phase(),
+            Some(AttackPhase::Startup)
+        );
+        assert_eq!(state.player_one().attack_hitbox(), None);
+
+        for _ in 1..STANDING_ATTACK_STARTUP_TICKS {
+            state.step(FrameInput::default());
+        }
+
+        state.step(FrameInput::default());
+
+        let player_one_body = state.player_one().body();
+        let player_two_body = state.player_two().body();
+        let player_one_hitbox = state
+            .player_one()
+            .attack_hitbox()
+            .expect("player one active attack should have a hitbox")
+            .rect();
+        let player_two_hitbox = state
+            .player_two()
+            .attack_hitbox()
+            .expect("player two active attack should have a hitbox")
+            .rect();
+
+        assert_eq!(
+            player_one_hitbox.x,
+            player_one_body.x + player_one_body.width
+        );
+        assert_eq!(
+            player_one_hitbox.y,
+            player_one_body.y + STANDING_ATTACK_HITBOX_VERTICAL_OFFSET
+        );
+        assert_eq!(player_one_hitbox.width, STANDING_ATTACK_HITBOX_WIDTH);
+        assert_eq!(player_one_hitbox.height, STANDING_ATTACK_HITBOX_HEIGHT);
+
+        assert_eq!(
+            player_two_hitbox.x,
+            player_two_body.x - STANDING_ATTACK_HITBOX_WIDTH
+        );
+        assert_eq!(
+            player_two_hitbox.y,
+            player_two_body.y + STANDING_ATTACK_HITBOX_VERTICAL_OFFSET
+        );
+        assert_eq!(player_two_hitbox.width, STANDING_ATTACK_HITBOX_WIDTH);
+        assert_eq!(player_two_hitbox.height, STANDING_ATTACK_HITBOX_HEIGHT);
+
+        for _ in 1..STANDING_ATTACK_ACTIVE_TICKS {
+            state.step(FrameInput::default());
+        }
+
+        state.step(FrameInput::default());
+
+        assert_eq!(
+            state.player_one().standing_attack_phase(),
+            Some(AttackPhase::Recovery)
+        );
+        assert_eq!(state.player_one().attack_hitbox(), None);
     }
 
     #[test]

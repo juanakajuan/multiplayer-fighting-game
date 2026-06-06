@@ -78,7 +78,9 @@ fn draw_fighter(
 ) {
     let body = fighter.body();
     draw.draw_rectangle(body.x, body.y, body.width, body.height, fill);
-    draw.draw_rectangle_lines(body.x, body.y, body.width, body.height, outline);
+
+    let hurtbox = fighter.hurtbox().rect();
+    draw.draw_rectangle_lines(hurtbox.x, hurtbox.y, hurtbox.width, hurtbox.height, outline);
 
     let marker_x = match fighter.facing_direction() {
         game::FacingDirection::Left => body.x + 12,
@@ -86,28 +88,14 @@ fn draw_fighter(
     };
     draw.draw_rectangle(marker_x, body.y + 28, 10, 10, outline);
 
-    if fighter.is_standing_attack_active() {
-        draw_standing_attack(draw, body, fighter.facing_direction(), outline);
+    if let Some(hitbox) = fighter.attack_hitbox() {
+        draw_attack_hitbox(draw, hitbox, outline);
     }
 }
 
-fn draw_standing_attack(
-    draw: &mut RaylibDrawHandle<'_>,
-    body: game::Rect,
-    facing_direction: game::FacingDirection,
-    color: Color,
-) {
-    const ATTACK_WIDTH: i32 = 54;
-    const ATTACK_HEIGHT: i32 = 26;
-    const ATTACK_VERTICAL_OFFSET: i32 = 54;
-
-    let attack_x = match facing_direction {
-        game::FacingDirection::Left => body.x - ATTACK_WIDTH,
-        game::FacingDirection::Right => body.x + body.width,
-    };
-    let attack_y = body.y + ATTACK_VERTICAL_OFFSET;
-
-    draw.draw_rectangle(attack_x, attack_y, ATTACK_WIDTH, ATTACK_HEIGHT, color);
+fn draw_attack_hitbox(draw: &mut RaylibDrawHandle<'_>, hitbox: game::AttackHitbox, color: Color) {
+    let rect = hitbox.rect();
+    draw.draw_rectangle(rect.x, rect.y, rect.width, rect.height, color);
 }
 
 fn main() {
