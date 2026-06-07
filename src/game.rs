@@ -195,23 +195,29 @@ impl FighterState {
     /// Current offensive hitbox, if the standing attack is active this tick.
     #[must_use]
     pub const fn attack_hitbox(&self) -> Option<AttackHitbox> {
-        if self.is_standing_attack_active() {
-            let x = match self.facing_direction {
-                FacingDirection::Left => self.body.x - STANDING_ATTACK_HITBOX_WIDTH,
-                FacingDirection::Right => self.body.x + self.body.width,
-            };
-
-            Some(AttackHitbox {
-                rect: Rect {
-                    x,
-                    y: self.body.y + STANDING_ATTACK_HITBOX_VERTICAL_OFFSET,
-                    width: STANDING_ATTACK_HITBOX_WIDTH,
-                    height: STANDING_ATTACK_HITBOX_HEIGHT,
-                },
-            })
-        } else {
-            None
+        if !self.is_standing_attack_active() {
+            return None;
         }
+
+        let x = match self.facing_direction {
+            FacingDirection::Left => self.body.x - STANDING_ATTACK_HITBOX_WIDTH,
+            FacingDirection::Right => self.body.x + self.body.width,
+        };
+
+        Some(AttackHitbox {
+            rect: Rect {
+                x,
+                y: self.body.y + STANDING_ATTACK_HITBOX_VERTICAL_OFFSET,
+                width: STANDING_ATTACK_HITBOX_WIDTH,
+                height: STANDING_ATTACK_HITBOX_HEIGHT,
+            },
+        })
+    }
+
+    fn step(&mut self, input: PlayerInput, arena: Arena) {
+        self.move_horizontally(horizontal_direction(input), arena);
+        self.move_vertically(input.jump, arena);
+        self.update_standing_attack(input.attack, arena);
     }
 
     fn move_horizontally(&mut self, direction: i32, arena: Arena) {
@@ -241,9 +247,8 @@ impl FighterState {
     }
 
     fn update_standing_attack(&mut self, attack: bool, arena: Arena) {
-        if self.is_performing_standing_attack() {
-            // `and_then(...)` means: keep the advanced state if there is one, or set `standing_attack` to `None` if the attack finished.
-            self.standing_attack = self.standing_attack.and_then(StandingAttackState::advance);
+        if let Some(standing_attack) = self.standing_attack {
+            self.standing_attack = standing_attack.advance();
         } else if attack && self.is_grounded(arena) {
             self.standing_attack = Some(StandingAttackState::new());
         }
@@ -371,18 +376,8 @@ impl GameState {
 
     /// Advances gameplay by exactly one fixed tick.
     pub fn step(&mut self, input: FrameInput) {
-        self.player_one
-            .move_horizontally(horizontal_direction(input.player_one), self.arena);
-        self.player_one
-            .move_vertically(input.player_one.jump, self.arena);
-        self.player_one
-            .update_standing_attack(input.player_one.attack, self.arena);
-        self.player_two
-            .move_horizontally(horizontal_direction(input.player_two), self.arena);
-        self.player_two
-            .move_vertically(input.player_two.jump, self.arena);
-        self.player_two
-            .update_standing_attack(input.player_two.attack, self.arena);
+        self.player_one.step(input.player_one, self.arena);
+        self.player_two.step(input.player_two, self.arena);
         self.update_facing_directions();
         self.tick = self.tick.checked_add(1).expect("tick counter overflow");
     }
