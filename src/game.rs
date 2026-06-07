@@ -29,6 +29,12 @@ const STANDING_ATTACK_HITBOX_WIDTH: i32 = 54;
 const STANDING_ATTACK_HITBOX_HEIGHT: i32 = 26;
 const STANDING_ATTACK_HITBOX_VERTICAL_OFFSET: i32 = 54;
 
+/// Starting health for each fighter.
+pub const FIGHTER_MAX_HEALTH: u32 = 100;
+
+/// Damage dealt by the current standing melee attack.
+pub const STANDING_ATTACK_DAMAGE: u32 = 10;
+
 /// Startup duration for the current standing melee attack.
 pub const STANDING_ATTACK_STARTUP_TICKS: u32 = 6;
 
@@ -96,6 +102,7 @@ pub struct FighterState {
     body: Rect,
     facing_direction: FacingDirection,
     vertical_velocity_per_tick: i32,
+    health: u32,
     standing_attack: Option<StandingAttackState>,
 }
 
@@ -130,6 +137,7 @@ pub enum AttackPhase {
 struct StandingAttackState {
     phase: AttackPhase,
     ticks_in_phase: u32,
+    has_hit: bool,
 }
 
 /// Horizontal direction a fighter is currently facing.
@@ -158,6 +166,7 @@ impl FighterState {
             },
             facing_direction,
             vertical_velocity_per_tick: 0,
+            health: FIGHTER_MAX_HEALTH,
             standing_attack: None,
         }
     }
@@ -178,6 +187,12 @@ impl FighterState {
     #[must_use]
     pub const fn facing_direction(&self) -> FacingDirection {
         self.facing_direction
+    }
+
+    /// Current remaining health.
+    #[must_use]
+    pub const fn health(&self) -> u32 {
+        self.health
     }
 
     /// Whether the fighter is performing the simple standing melee attack this tick.
@@ -262,6 +277,27 @@ impl FighterState {
             self.standing_attack = Some(StandingAttackState::new());
         }
     }
+
+    fn can_apply_standing_attack_damage(&self) -> bool {
+        matches!(
+            self.standing_attack,
+            Some(StandingAttackState {
+                phase: AttackPhase::Active,
+                has_hit: false,
+                ..
+            })
+        )
+    }
+
+    fn mark_standing_attack_hit(&mut self) {
+        if let Some(standing_attack) = self.standing_attack.as_mut() {
+            standing_attack.has_hit = true;
+        }
+    }
+
+    fn apply_damage(&mut self, damage: u32) {
+        self.health = self.health.saturating_sub(damage);
+    }
 }
 
 impl StandingAttackState {
@@ -269,6 +305,7 @@ impl StandingAttackState {
         Self {
             phase: AttackPhase::Startup,
             ticks_in_phase: 1,
+            has_hit: false,
         }
     }
 
@@ -286,6 +323,7 @@ impl StandingAttackState {
         self.phase.next().map(|phase| Self {
             phase,
             ticks_in_phase: 1,
+            has_hit: self.has_hit,
         })
     }
 }
@@ -403,7 +441,26 @@ impl GameState {
         self.player_one.step(input.player_one, self.arena);
         self.player_two.step(input.player_two, self.arena);
         self.update_facing_directions();
+        self.apply_hit_damage();
         self.tick = self.tick.checked_add(1).expect("tick counter overflow");
+    }
+
+    fn apply_hit_damage(&mut self) {
+        let collisions = self.hitbox_collisions();
+
+        if collisions.player_one_hits_player_two
+            && self.player_one.can_apply_standing_attack_damage()
+        {
+            self.player_two.apply_damage(STANDING_ATTACK_DAMAGE);
+            self.player_one.mark_standing_attack_hit();
+        }
+
+        if collisions.player_two_hits_player_one
+            && self.player_two.can_apply_standing_attack_damage()
+        {
+            self.player_one.apply_damage(STANDING_ATTACK_DAMAGE);
+            self.player_two.mark_standing_attack_hit();
+        }
     }
 
     fn update_facing_directions(&mut self) {
@@ -450,8 +507,8 @@ fn horizontal_direction(input: PlayerInput) -> i32 {
 mod tests {
     use super::{
         AttackPhase, FIGHTER_HORIZONTAL_SPEED_PER_TICK, FIGHTER_JUMP_SPEED_PER_TICK,
-        FacingDirection, FrameInput, GameState, HitboxCollisions, PlayerInput,
-        STANDING_ATTACK_ACTIVE_TICKS, STANDING_ATTACK_HITBOX_HEIGHT,
+        FIGHTER_MAX_HEALTH, FacingDirection, FrameInput, GameState, HitboxCollisions, PlayerInput,
+        STANDING_ATTACK_ACTIVE_TICKS, STANDING_ATTACK_DAMAGE, STANDING_ATTACK_HITBOX_HEIGHT,
         STANDING_ATTACK_HITBOX_VERTICAL_OFFSET, STANDING_ATTACK_HITBOX_WIDTH,
         STANDING_ATTACK_RECOVERY_TICKS, STANDING_ATTACK_STARTUP_TICKS,
     };
@@ -815,6 +872,44 @@ mod tests {
     }
 
     #[test]
+    fn active_attack_applies_damage_once_on_hit() {
+        let mut state = GameState::new();
+        let player_one_body = state.player_one().body();
+        state.player_two.body.x =
+            player_one_body.x + player_one_body.width + STANDING_ATTACK_HITBOX_WIDTH - 1;
+        state.player_two.body.y = player_one_body.y;
+
+        state.step(FrameInput {
+            player_one: PlayerInput {
+                attack: true,
+                ..PlayerInput::default()
+            },
+            player_two: PlayerInput::default(),
+        });
+
+        assert_eq!(state.player_two().health(), FIGHTER_MAX_HEALTH);
+
+        for _ in 0..STANDING_ATTACK_STARTUP_TICKS {
+            state.step(FrameInput::default());
+        }
+
+        assert_eq!(
+            state.player_two().health(),
+            FIGHTER_MAX_HEALTH - STANDING_ATTACK_DAMAGE
+        );
+
+        for _ in 0..STANDING_ATTACK_ACTIVE_TICKS {
+            state.step(FrameInput::default());
+        }
+
+        assert_eq!(
+            state.player_two().health(),
+            FIGHTER_MAX_HEALTH - STANDING_ATTACK_DAMAGE
+        );
+        assert_eq!(state.player_one().health(), FIGHTER_MAX_HEALTH);
+    }
+
+    #[test]
     fn active_attack_misses_when_hurtbox_is_out_of_range() {
         let mut state = GameState::new();
 
@@ -835,6 +930,7 @@ mod tests {
             Some(AttackPhase::Active)
         );
         assert_eq!(state.hitbox_collisions(), HitboxCollisions::default());
+        assert_eq!(state.player_two().health(), FIGHTER_MAX_HEALTH);
     }
 
     #[test]
