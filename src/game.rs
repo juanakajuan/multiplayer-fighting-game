@@ -81,6 +81,15 @@ pub struct AttackHitbox {
     rect: Rect,
 }
 
+/// Current hitbox versus hurtbox overlaps for both fighters.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct HitboxCollisions {
+    /// Player one's active attack hitbox overlaps player two's hurtbox.
+    pub player_one_hits_player_two: bool,
+    /// Player two's active attack hitbox overlaps player one's hurtbox.
+    pub player_two_hits_player_one: bool,
+}
+
 /// Per-fighter gameplay state owned by [`GameState`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FighterState {
@@ -374,6 +383,21 @@ impl GameState {
         self.player_two
     }
 
+    /// Current hitbox versus hurtbox overlaps.
+    #[must_use]
+    pub fn hitbox_collisions(&self) -> HitboxCollisions {
+        HitboxCollisions {
+            player_one_hits_player_two: attack_overlaps_hurtbox(
+                self.player_one.attack_hitbox(),
+                self.player_two.hurtbox(),
+            ),
+            player_two_hits_player_one: attack_overlaps_hurtbox(
+                self.player_two.attack_hitbox(),
+                self.player_one.hurtbox(),
+            ),
+        }
+    }
+
     /// Advances gameplay by exactly one fixed tick.
     pub fn step(&mut self, input: FrameInput) {
         self.player_one.step(input.player_one, self.arena);
@@ -400,6 +424,20 @@ fn center_x(rect: Rect) -> i32 {
     rect.x + (rect.width / 2)
 }
 
+fn attack_overlaps_hurtbox(attack_hitbox: Option<AttackHitbox>, hurtbox: Hurtbox) -> bool {
+    match attack_hitbox {
+        Some(attack_hitbox) => rects_overlap(attack_hitbox.rect(), hurtbox.rect()),
+        None => false,
+    }
+}
+
+fn rects_overlap(first: Rect, second: Rect) -> bool {
+    first.x < second.x + second.width
+        && first.x + first.width > second.x
+        && first.y < second.y + second.height
+        && first.y + first.height > second.y
+}
+
 fn horizontal_direction(input: PlayerInput) -> i32 {
     match (input.move_left, input.move_right) {
         (true, false) => -1,
@@ -412,10 +450,10 @@ fn horizontal_direction(input: PlayerInput) -> i32 {
 mod tests {
     use super::{
         AttackPhase, FIGHTER_HORIZONTAL_SPEED_PER_TICK, FIGHTER_JUMP_SPEED_PER_TICK,
-        FacingDirection, FrameInput, GameState, PlayerInput, STANDING_ATTACK_ACTIVE_TICKS,
-        STANDING_ATTACK_HITBOX_HEIGHT, STANDING_ATTACK_HITBOX_VERTICAL_OFFSET,
-        STANDING_ATTACK_HITBOX_WIDTH, STANDING_ATTACK_RECOVERY_TICKS,
-        STANDING_ATTACK_STARTUP_TICKS,
+        FacingDirection, FrameInput, GameState, HitboxCollisions, PlayerInput,
+        STANDING_ATTACK_ACTIVE_TICKS, STANDING_ATTACK_HITBOX_HEIGHT,
+        STANDING_ATTACK_HITBOX_VERTICAL_OFFSET, STANDING_ATTACK_HITBOX_WIDTH,
+        STANDING_ATTACK_RECOVERY_TICKS, STANDING_ATTACK_STARTUP_TICKS,
     };
 
     #[test]
@@ -739,6 +777,64 @@ mod tests {
             Some(AttackPhase::Recovery)
         );
         assert_eq!(state.player_one().attack_hitbox(), None);
+    }
+
+    #[test]
+    fn active_attack_detects_hitbox_hurtbox_collision() {
+        let mut state = GameState::new();
+        let player_one_body = state.player_one().body();
+        state.player_two.body.x =
+            player_one_body.x + player_one_body.width + STANDING_ATTACK_HITBOX_WIDTH - 1;
+        state.player_two.body.y = player_one_body.y;
+
+        state.step(FrameInput {
+            player_one: PlayerInput {
+                attack: true,
+                ..PlayerInput::default()
+            },
+            player_two: PlayerInput::default(),
+        });
+
+        assert_eq!(state.hitbox_collisions(), HitboxCollisions::default());
+
+        for _ in 0..STANDING_ATTACK_STARTUP_TICKS {
+            state.step(FrameInput::default());
+        }
+
+        assert_eq!(
+            state.player_one().standing_attack_phase(),
+            Some(AttackPhase::Active)
+        );
+        assert_eq!(
+            state.hitbox_collisions(),
+            HitboxCollisions {
+                player_one_hits_player_two: true,
+                player_two_hits_player_one: false,
+            }
+        );
+    }
+
+    #[test]
+    fn active_attack_misses_when_hurtbox_is_out_of_range() {
+        let mut state = GameState::new();
+
+        state.step(FrameInput {
+            player_one: PlayerInput {
+                attack: true,
+                ..PlayerInput::default()
+            },
+            player_two: PlayerInput::default(),
+        });
+
+        for _ in 0..STANDING_ATTACK_STARTUP_TICKS {
+            state.step(FrameInput::default());
+        }
+
+        assert_eq!(
+            state.player_one().standing_attack_phase(),
+            Some(AttackPhase::Active)
+        );
+        assert_eq!(state.hitbox_collisions(), HitboxCollisions::default());
     }
 
     #[test]
