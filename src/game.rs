@@ -35,6 +35,9 @@ pub const FIGHTER_MAX_HEALTH: u32 = 100;
 /// Damage dealt by the current standing melee attack.
 pub const STANDING_ATTACK_DAMAGE: u32 = 10;
 
+/// Hitstun applied by the current standing melee attack.
+pub const STANDING_ATTACK_HITSTUN_TICKS: u32 = 18;
+
 /// Startup duration for the current standing melee attack.
 pub const STANDING_ATTACK_STARTUP_TICKS: u32 = 6;
 
@@ -103,6 +106,7 @@ pub struct FighterState {
     facing_direction: FacingDirection,
     vertical_velocity_per_tick: i32,
     health: u32,
+    hitstun_ticks_remaining: u32,
     standing_attack: Option<StandingAttackState>,
 }
 
@@ -167,6 +171,7 @@ impl FighterState {
             facing_direction,
             vertical_velocity_per_tick: 0,
             health: FIGHTER_MAX_HEALTH,
+            hitstun_ticks_remaining: 0,
             standing_attack: None,
         }
     }
@@ -193,6 +198,18 @@ impl FighterState {
     #[must_use]
     pub const fn health(&self) -> u32 {
         self.health
+    }
+
+    /// Remaining fixed ticks before the fighter can act again after being hit.
+    #[must_use]
+    pub const fn hitstun_ticks_remaining(&self) -> u32 {
+        self.hitstun_ticks_remaining
+    }
+
+    /// Whether the fighter is currently unable to act because they were hit.
+    #[must_use]
+    pub const fn is_in_hitstun(&self) -> bool {
+        self.hitstun_ticks_remaining > 0
     }
 
     /// Whether the fighter is performing the simple standing melee attack this tick.
@@ -239,9 +256,19 @@ impl FighterState {
     }
 
     fn step(&mut self, input: PlayerInput, arena: Arena) {
+        if self.is_in_hitstun() {
+            self.advance_hitstun();
+            self.move_vertically(false, arena);
+            return;
+        }
+
         self.move_horizontally(horizontal_direction(input), arena);
         self.move_vertically(input.jump, arena);
         self.update_standing_attack(input.attack, arena);
+    }
+
+    fn advance_hitstun(&mut self) {
+        self.hitstun_ticks_remaining = self.hitstun_ticks_remaining.saturating_sub(1);
     }
 
     fn move_horizontally(&mut self, direction: i32, arena: Arena) {
@@ -297,6 +324,12 @@ impl FighterState {
 
     fn apply_damage(&mut self, damage: u32) {
         self.health = self.health.saturating_sub(damage);
+    }
+
+    fn apply_standing_attack_hit(&mut self) {
+        self.apply_damage(STANDING_ATTACK_DAMAGE);
+        self.hitstun_ticks_remaining = STANDING_ATTACK_HITSTUN_TICKS;
+        self.standing_attack = None;
     }
 }
 
@@ -447,18 +480,18 @@ impl GameState {
 
     fn apply_hit_damage(&mut self) {
         let collisions = self.hitbox_collisions();
+        let player_one_hits_player_two = collisions.player_one_hits_player_two
+            && self.player_one.can_apply_standing_attack_damage();
+        let player_two_hits_player_one = collisions.player_two_hits_player_one
+            && self.player_two.can_apply_standing_attack_damage();
 
-        if collisions.player_one_hits_player_two
-            && self.player_one.can_apply_standing_attack_damage()
-        {
-            self.player_two.apply_damage(STANDING_ATTACK_DAMAGE);
+        if player_one_hits_player_two {
+            self.player_two.apply_standing_attack_hit();
             self.player_one.mark_standing_attack_hit();
         }
 
-        if collisions.player_two_hits_player_one
-            && self.player_two.can_apply_standing_attack_damage()
-        {
-            self.player_one.apply_damage(STANDING_ATTACK_DAMAGE);
+        if player_two_hits_player_one {
+            self.player_one.apply_standing_attack_hit();
             self.player_two.mark_standing_attack_hit();
         }
     }
@@ -510,7 +543,8 @@ mod tests {
         FIGHTER_MAX_HEALTH, FacingDirection, FrameInput, GameState, HitboxCollisions, PlayerInput,
         STANDING_ATTACK_ACTIVE_TICKS, STANDING_ATTACK_DAMAGE, STANDING_ATTACK_HITBOX_HEIGHT,
         STANDING_ATTACK_HITBOX_VERTICAL_OFFSET, STANDING_ATTACK_HITBOX_WIDTH,
-        STANDING_ATTACK_RECOVERY_TICKS, STANDING_ATTACK_STARTUP_TICKS,
+        STANDING_ATTACK_HITSTUN_TICKS, STANDING_ATTACK_RECOVERY_TICKS,
+        STANDING_ATTACK_STARTUP_TICKS,
     };
 
     #[test]
@@ -907,6 +941,70 @@ mod tests {
             FIGHTER_MAX_HEALTH - STANDING_ATTACK_DAMAGE
         );
         assert_eq!(state.player_one().health(), FIGHTER_MAX_HEALTH);
+    }
+
+    #[test]
+    fn active_attack_applies_hitstun_on_hit() {
+        let mut state = GameState::new();
+        let player_one_body = state.player_one().body();
+        state.player_two.body.x =
+            player_one_body.x + player_one_body.width + STANDING_ATTACK_HITBOX_WIDTH - 1;
+        state.player_two.body.y = player_one_body.y;
+
+        state.step(FrameInput {
+            player_one: PlayerInput {
+                attack: true,
+                ..PlayerInput::default()
+            },
+            player_two: PlayerInput::default(),
+        });
+
+        for _ in 0..STANDING_ATTACK_STARTUP_TICKS {
+            state.step(FrameInput::default());
+        }
+
+        assert!(state.player_two().is_in_hitstun());
+        assert_eq!(
+            state.player_two().hitstun_ticks_remaining(),
+            STANDING_ATTACK_HITSTUN_TICKS
+        );
+
+        let player_two_hit_x = state.player_two().body().x;
+        state.step(FrameInput {
+            player_one: PlayerInput::default(),
+            player_two: PlayerInput {
+                move_left: true,
+                jump: true,
+                attack: true,
+                ..PlayerInput::default()
+            },
+        });
+
+        assert_eq!(state.player_two().body().x, player_two_hit_x);
+        assert!(!state.player_two().is_performing_standing_attack());
+        assert_eq!(
+            state.player_two().hitstun_ticks_remaining(),
+            STANDING_ATTACK_HITSTUN_TICKS - 1
+        );
+
+        for _ in 1..STANDING_ATTACK_HITSTUN_TICKS {
+            state.step(FrameInput::default());
+        }
+
+        assert!(!state.player_two().is_in_hitstun());
+
+        state.step(FrameInput {
+            player_one: PlayerInput::default(),
+            player_two: PlayerInput {
+                move_left: true,
+                ..PlayerInput::default()
+            },
+        });
+
+        assert_eq!(
+            state.player_two().body().x,
+            player_two_hit_x - FIGHTER_HORIZONTAL_SPEED_PER_TICK
+        );
     }
 
     #[test]
