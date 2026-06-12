@@ -200,22 +200,10 @@ impl FighterState {
         self.health
     }
 
-    /// Remaining fixed ticks before the fighter can act again after being hit.
-    #[must_use]
-    pub const fn hitstun_ticks_remaining(&self) -> u32 {
-        self.hitstun_ticks_remaining
-    }
-
     /// Whether the fighter is currently unable to act because they were hit.
     #[must_use]
     pub const fn is_in_hitstun(&self) -> bool {
         self.hitstun_ticks_remaining > 0
-    }
-
-    /// Whether the fighter is performing the simple standing melee attack this tick.
-    #[must_use]
-    pub const fn is_performing_standing_attack(&self) -> bool {
-        self.standing_attack.is_some()
     }
 
     /// Current standing attack phase, if the fighter is attacking.
@@ -734,13 +722,12 @@ mod tests {
             player_two: PlayerInput::default(),
         });
 
-        assert!(state.player_one().is_performing_standing_attack());
         assert_eq!(
             state.player_one().standing_attack_phase(),
             Some(AttackPhase::Startup)
         );
         assert!(!state.player_one().is_standing_attack_active());
-        assert!(!state.player_two().is_performing_standing_attack());
+        assert_eq!(state.player_two().standing_attack_phase(), None);
     }
 
     #[test]
@@ -791,7 +778,6 @@ mod tests {
 
         state.step(FrameInput::default());
 
-        assert!(!state.player_one().is_performing_standing_attack());
         assert_eq!(state.player_one().standing_attack_phase(), None);
     }
 
@@ -965,7 +951,7 @@ mod tests {
 
         assert!(state.player_two().is_in_hitstun());
         assert_eq!(
-            state.player_two().hitstun_ticks_remaining(),
+            state.player_two.hitstun_ticks_remaining,
             STANDING_ATTACK_HITSTUN_TICKS
         );
 
@@ -981,9 +967,9 @@ mod tests {
         });
 
         assert_eq!(state.player_two().body().x, player_two_hit_x);
-        assert!(!state.player_two().is_performing_standing_attack());
+        assert_eq!(state.player_two().standing_attack_phase(), None);
         assert_eq!(
-            state.player_two().hitstun_ticks_remaining(),
+            state.player_two.hitstun_ticks_remaining,
             STANDING_ATTACK_HITSTUN_TICKS - 1
         );
 
@@ -1044,7 +1030,6 @@ mod tests {
             player_two: PlayerInput::default(),
         });
 
-        assert!(!state.player_one().is_performing_standing_attack());
         assert_eq!(state.player_one().standing_attack_phase(), None);
     }
 }

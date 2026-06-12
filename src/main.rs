@@ -4,6 +4,14 @@ mod game;
 
 use raylib::prelude::*;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct HealthBarBounds {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
 fn read_player_one_input(rl: &RaylibHandle) -> game::PlayerInput {
     game::PlayerInput {
         move_left: rl.is_key_down(KeyboardKey::KEY_A),
@@ -32,6 +40,7 @@ fn read_frame_input(rl: &RaylibHandle) -> game::FrameInput {
 fn draw_game(draw: &mut RaylibDrawHandle<'_>, state: &game::GameState) {
     draw.clear_background(Color::new(11, 11, 11, 255));
     draw_arena(draw, state.arena());
+    draw_health_hud(draw, state);
     draw_fighter(
         draw,
         state.player_one(),
@@ -44,6 +53,79 @@ fn draw_game(draw: &mut RaylibDrawHandle<'_>, state: &game::GameState) {
         Color::new(238, 92, 92, 255),
         Color::new(255, 224, 224, 255),
     );
+}
+
+fn draw_health_hud(draw: &mut RaylibDrawHandle<'_>, state: &game::GameState) {
+    const BAR_WIDTH: i32 = 320;
+    const BAR_HEIGHT: i32 = 20;
+    const BAR_Y: i32 = 28;
+    const BAR_MARGIN_X: i32 = 40;
+
+    draw_health_bar(
+        draw,
+        "P1",
+        state.player_one().health(),
+        HealthBarBounds {
+            x: BAR_MARGIN_X,
+            y: BAR_Y,
+            width: BAR_WIDTH,
+            height: BAR_HEIGHT,
+        },
+        Color::new(70, 145, 255, 255),
+    );
+    draw_health_bar(
+        draw,
+        "P2",
+        state.player_two().health(),
+        HealthBarBounds {
+            x: game::ARENA_WIDTH - BAR_MARGIN_X - BAR_WIDTH,
+            y: BAR_Y,
+            width: BAR_WIDTH,
+            height: BAR_HEIGHT,
+        },
+        Color::new(238, 92, 92, 255),
+    );
+}
+
+fn draw_health_bar(
+    draw: &mut RaylibDrawHandle<'_>,
+    label: &str,
+    health: u32,
+    bounds: HealthBarBounds,
+    fill: Color,
+) {
+    let clamped_health = health.min(game::FIGHTER_MAX_HEALTH);
+    let filled_width = health_bar_fill_width(clamped_health, bounds.width);
+    let text = format!("{label} {clamped_health}/{}", game::FIGHTER_MAX_HEALTH);
+
+    draw.draw_rectangle(
+        bounds.x,
+        bounds.y,
+        bounds.width,
+        bounds.height,
+        Color::new(25, 26, 30, 255),
+    );
+    draw.draw_rectangle(bounds.x, bounds.y, filled_width, bounds.height, fill);
+    draw.draw_rectangle_lines(
+        bounds.x,
+        bounds.y,
+        bounds.width,
+        bounds.height,
+        Color::new(228, 231, 236, 255),
+    );
+    draw.draw_text(
+        &text,
+        bounds.x,
+        bounds.y + bounds.height + 6,
+        20,
+        Color::new(228, 231, 236, 255),
+    );
+}
+
+fn health_bar_fill_width(health: u32, width: i32) -> i32 {
+    let filled_width = (i64::from(width) * i64::from(health)) / i64::from(game::FIGHTER_MAX_HEALTH);
+
+    i32::try_from(filled_width).expect("health bar width fits i32")
 }
 
 fn draw_arena(draw: &mut RaylibDrawHandle<'_>, arena: game::Arena) {
