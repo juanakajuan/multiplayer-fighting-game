@@ -463,6 +463,12 @@ impl GameState {
         self.player_two.step(input.player_two, self.arena);
         self.update_facing_directions();
         self.apply_hit_damage();
+
+        if self.has_defeated_fighter() {
+            self.reset_match();
+            return;
+        }
+
         self.tick = self.tick.checked_add(1).expect("tick counter overflow");
     }
 
@@ -482,6 +488,14 @@ impl GameState {
             self.player_one.apply_standing_attack_hit();
             self.player_two.mark_standing_attack_hit();
         }
+    }
+
+    fn has_defeated_fighter(&self) -> bool {
+        self.player_one.health == 0 || self.player_two.health == 0
+    }
+
+    fn reset_match(&mut self) {
+        *self = Self::default();
     }
 
     fn update_facing_directions(&mut self) {
@@ -991,6 +1005,30 @@ mod tests {
             state.player_two().body().x,
             player_two_hit_x - FIGHTER_HORIZONTAL_SPEED_PER_TICK
         );
+    }
+
+    #[test]
+    fn lethal_attack_resets_match() {
+        let mut state = GameState::new();
+        let player_one_body = state.player_one().body();
+        state.player_two.body.x =
+            player_one_body.x + player_one_body.width + STANDING_ATTACK_HITBOX_WIDTH - 1;
+        state.player_two.body.y = player_one_body.y;
+        state.player_two.health = STANDING_ATTACK_DAMAGE;
+
+        state.step(FrameInput {
+            player_one: PlayerInput {
+                attack: true,
+                ..PlayerInput::default()
+            },
+            player_two: PlayerInput::default(),
+        });
+
+        for _ in 0..STANDING_ATTACK_STARTUP_TICKS {
+            state.step(FrameInput::default());
+        }
+
+        assert_eq!(state, GameState::new());
     }
 
     #[test]
