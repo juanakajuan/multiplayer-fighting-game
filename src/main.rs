@@ -1,7 +1,6 @@
 //! Raylib shell for input, rendering, and fixed-timestep driving of the game.
 
-mod game;
-
+use multiplayer_fighting_game::game;
 use raylib::prelude::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
